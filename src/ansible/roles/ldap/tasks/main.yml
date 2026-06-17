@@ -52,6 +52,49 @@
       add: objectclasses
       objectclasses: ( 2.16.840.1.113730.3.8.24.9 NAME 'passkeyUser' DESC 'IPA passkey user' AUXILIARY MAY passkey)
 
+- name: Stop LDAP service
+  service:
+    name: dirsrv@localhost.service
+    state: stopped
+
+- name: Create base ldap binary backup
+  command: dsctl slapd-localhost db2bak base
+  args:
+    creates: '/var/lib/dirsrv/slapd-localhost/bak/base'
+
+- name: Check for existing largedata backup
+  stat:
+    path: /var/lib/dirsrv/slapd-localhost/bak/largedata
+  register: largedata_backup
+
+- name: Create largedata ldap binary backup and restore base
+  block:
+  - name: 'Install BigLDAP generator'
+    copy:
+      src: generate-bigldap-data.py
+      dest: /usr/local/bin/generate-bigldap-data.py
+      owner: root
+      group: root
+      mode: '0755'
+  - name: Create large data ldif
+    shell: |
+      /usr/local/bin/generate-bigldap-data.py > /var/lib/dirsrv/slapd-localhost/bak/largedata.ldif
+  - name: Create large ldap data from ldif
+    command: dsctl slapd-localhost ldif2db userroot /var/lib/dirsrv/slapd-localhost/bak/largedata.ldif
+  - name: Create large data backup
+    command: dsctl slapd-localhost db2bak largedata
+  when: not largedata_backup.stat.exists
+  always:
+  - name: Restore base backup
+    command: dsctl slapd-localhost bak2db base
+  - name: Delete unnecessary files
+    file:
+      path: "{{ item }}"
+      state: absent
+    with_items:
+      - /var/lib/dirsrv/slapd-localhost/bak/largedata.ldif
+      - /usr/local/bin/generate-bigldap-data.py
+
 - name: Restart LDAP service
   service:
     name: dirsrv@localhost.service
